@@ -123,9 +123,7 @@ def load_data():
             df_con = pd.read_csv(file_con, sep=",", compression="gzip", encoding='utf-8')
             
     # VALIDACIÓN DE COLUMNAS (NORMALIZACIÓN)
-    # Esto asegura que el código funcione aunque los nombres cambien un poco
     if not df_ent.empty:
-        # Si no existe 'nombre_entidad_normalizado', buscamos alternativas
         if 'nombre_entidad_normalizado' not in df_ent.columns and 'nombre_entidad' in df_ent.columns:
             df_ent.rename(columns={'nombre_entidad': 'nombre_entidad_normalizado'}, inplace=True)
             
@@ -141,7 +139,6 @@ def load_data():
         
         # Calcular Riesgo si no existe
         if 'Riesgo' not in df_con.columns:
-            # Buscar columnas de alerta
             col_riesgo = None
             for c in ['alerta_legal_ss', 'alerta_riesgo_legal', 'nivel_riesgo']:
                 if c in df_con.columns:
@@ -150,17 +147,16 @@ def load_data():
             
             if col_riesgo:
                 df_con['Riesgo'] = df_con[col_riesgo].fillna('OK').astype(str).str.upper()
-                # Limpiar valores extraños
                 validos = ['CRÍTICA', 'ALTA', 'MEDIA', 'BAJA', 'OK']
                 df_con['Riesgo'] = df_con['Riesgo'].apply(lambda x: x if x in validos else 'OK')
             else:
-                df_con['Riesgo'] = 'OK' # Valor por defecto si no hay datos de riesgo
+                df_con['Riesgo'] = 'OK' 
 
     return df_ent, df_con
 
 df_ent, df_con = load_data()
 
-# Si falla la carga, mostramos error elegante
+# Si falla la carga
 if df_ent.empty:
     st.error("⚠️ No se encontraron datos. Verifica que los archivos .csv.gz estén en GitHub.")
     st.stop()
@@ -181,7 +177,7 @@ with st.sidebar:
     st.markdown("---")
     st.caption("MENÚ PRINCIPAL")
     
-    # NAVEGACIÓN LATERAL (ESTILO PREMIUM)
+    # NAVEGACIÓN LATERAL
     menu = st.radio(
         "Ir a:", 
         ["Home", "Contratos Secop", "Entidades", "Afiliaciones"],
@@ -216,8 +212,11 @@ if menu == "Home":
         st.info("Bienvenido al panel de control. Utilice el menú lateral para navegar entre los módulos de análisis.")
     with c2:
         if 'departamento_base' in df_ent.columns:
-            top_dep = df_ent['departamento_base'].mode()[0]
-            st.success(f"📍 Región con mayor actividad: **{top_dep}**")
+            try:
+                top_dep = df_ent['departamento_base'].mode()[0]
+                st.success(f"📍 Región con mayor actividad: **{top_dep}**")
+            except:
+                pass
 
 # ================= SECCIÓN: CONTRATOS SECOP =================
 elif menu == "Contratos Secop":
@@ -299,7 +298,7 @@ elif menu == "Afiliaciones":
     st.markdown("### 🚨 Semáforo de Cumplimiento por Entidad")
     
     if 'ultima_entidad_contratante' in df_con.columns and 'Riesgo' in df_con.columns:
-        # Preparamos los datos para el tablero
+        # Preparamos los datos
         df_con['is_crit'] = (df_con['Riesgo'] == 'CRÍTICA').astype(int)
         df_con['is_high'] = (df_con['Riesgo'] == 'ALTA').astype(int)
         df_con['is_med'] = (df_con['Riesgo'] == 'MEDIA').astype(int)
@@ -308,15 +307,16 @@ elif menu == "Afiliaciones":
         board = df_con.groupby('ultima_entidad_contratante')[['is_crit', 'is_high', 'is_med', 'is_ok']].sum().reset_index()
         board['Total'] = board['is_crit'] + board['is_high'] + board['is_med'] + board['is_ok']
         
-        # Calcular porcentaje de cumplimiento (OK / Total)
+        # Calcular porcentaje
         board['pct_val'] = (board['is_ok'] / board['Total']) * 100
+        board['pct_val'] = board['pct_val'].fillna(0) # Evitar NaN si total es 0
         
-        # Lógica del Semáforo (Puntito de color)
+        # Lógica del Semáforo
         def get_color_dot(val):
-            if val >= 99: return "🟢" # Excelente
-            if val >= 90: return "🟢" # Bueno
-            if val >= 50: return "🟡" # Regular
-            return "🔴" # Crítico
+            if val >= 99: return "🟢"
+            if val >= 90: return "🟢" 
+            if val >= 50: return "🟡"
+            return "🔴"
         
         board['Semáforo'] = board['pct_val'].apply(get_color_dot)
         
@@ -325,11 +325,23 @@ elif menu == "Afiliaciones":
         if txt_f: 
             board = board[board['ultima_entidad_contratante'].str.contains(txt_f.upper(), na=False)]
         
-        # Ordenar por críticos (para ver lo malo primero)
+        # Ordenar
         board = board.sort_values('is_crit', ascending=False)
         
         # MOSTRAR TABLA
         st.dataframe(
             board[['ultima_entidad_contratante', 'Total', 'is_crit', 'is_high', 'is_med', 'is_ok', 'pct_val', 'Semáforo']],
             column_config={
-                "ultima_entidad_contratante
+                "ultima_entidad_contratante": st.column_config.TextColumn("Entidad", width="large"),
+                "is_crit": st.column_config.NumberColumn("🔴 Críticos"),
+                "is_high": st.column_config.NumberColumn("🟠 Altos"),
+                "is_med": st.column_config.NumberColumn("🟡 Medios"),
+                "is_ok": st.column_config.NumberColumn("🟢 OK"),
+                "pct_val": st.column_config.ProgressColumn("% Cumplimiento", min_value=0, max_value=100, format="%.1f%%"),
+                "Semáforo": st.column_config.TextColumn("Estado", width="small")
+            },
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.warning("Faltan datos de 'Entidad Contratante' o 'Riesgo' en la base de contratistas.")
