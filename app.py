@@ -1,11 +1,10 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import json
 import numpy as np
 import os
 
-# --- CONFIGURACIÓN DE PÁGINA (Debe ser lo primero) ---
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
     page_title="Tablero EULER 2026",
     page_icon="📊",
@@ -13,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- ESTILOS CSS PERSONALIZADOS ---
+# --- ESTILOS CSS ---
 st.markdown("""
 <style>
     .metric-card {
@@ -32,7 +31,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- FUNCIÓN DE CARGA ROBUSTA ---
+# --- CARGA DE DATOS ---
 @st.cache_data
 def load_data():
     file_ent = "entidad_final.csv.gz"
@@ -52,27 +51,34 @@ def load_data():
 
     return df_ent, df_con
 
-# --- CARGA ---
+# --- EJECUCIÓN DE CARGA ---
 df_ent, df_con = load_data()
 
+# Validación Crítica: Si no hay datos, paramos.
 if df_ent.empty:
-    st.error("⚠️ No se pudieron cargar los datos. Revisa que los archivos 'entidad_final.csv.gz' y 'contratista_final.csv.gz' estén en GitHub.")
+    st.error("⚠️ Los datos no cargaron correctamente. Verifica que 'entidad_final.csv.gz' esté en GitHub y tenga datos.")
     st.stop()
 
 # ==============================================================================
 #                             SIDEBAR (FILTROS)
 # ==============================================================================
 
-# --- CORRECCIÓN DEL LOGO ---
-if os.path.exists("LogoEuler.png"):
-    st.sidebar.image("LogoEuler.png", use_column_width=True)
-else:
+# --- MANEJO SEGURO DEL LOGO ---
+# Aquí estaba el error. Ahora lo protegemos con try-except.
+try:
+    if os.path.exists("LogoEuler.png"):
+        st.sidebar.image("LogoEuler.png", use_column_width=True)
+    else:
+        st.sidebar.markdown("## 📊 EULER")
+except Exception as e:
+    # Si la imagen falla (está corrupta), mostramos texto y seguimos.
+    st.sidebar.warning("⚠️ Error en Logo")
     st.sidebar.markdown("## 📊 EULER")
-# ---------------------------
+# ------------------------------
 
 st.sidebar.title("🔍 Panel de Control")
 
-# Filtro 1: Departamento
+# Filtro: Departamento
 if 'departamento_base' in df_ent.columns:
     deptos = sorted(df_ent['departamento_base'].dropna().astype(str).unique())
     selected_depto = st.sidebar.selectbox("📍 Filtrar por Departamento:", ["Todos"] + deptos)
@@ -80,7 +86,7 @@ if 'departamento_base' in df_ent.columns:
     if selected_depto != "Todos":
         df_ent = df_ent[df_ent['departamento_base'] == selected_depto]
 
-# Filtro 2: Rango de Presupuesto
+# Filtro: Presupuesto
 if 'presupuesto_total_historico' in df_ent.columns:
     try:
         min_val = float(df_ent['presupuesto_total_historico'].min())
@@ -97,10 +103,10 @@ if 'presupuesto_total_historico' in df_ent.columns:
                    (df_ent['presupuesto_total_historico'] <= val_range[1]*1_000_000)
             df_ent = df_ent[mask]
     except:
-        pass # Si falla el slider, no mostramos nada pero no rompemos la app
+        pass
 
 st.sidebar.markdown("---")
-st.sidebar.info(f"Mostrando {len(df_ent)} entidades filtradas.")
+st.sidebar.caption(f"Registros: {len(df_ent)}")
 
 # ==============================================================================
 #                             DASHBOARD PRINCIPAL
@@ -131,7 +137,7 @@ with col4:
 
 st.markdown("---")
 
-# --- SECCIÓN GRÁFICA ---
+# --- GRÁFICAS Y PESTAÑAS ---
 tab1, tab2, tab3 = st.tabs(["📊 Panorama General", "🏛️ Detalle Entidades", "🏗️ Detalle Contratistas"])
 
 # === PESTAÑA 1: PANORAMA ===
@@ -148,7 +154,7 @@ with tab1:
             st.plotly_chart(fig_map, use_container_width=True)
 
     with c2:
-        st.subheader("Presupuesto vs Cantidad de Contratos")
+        st.subheader("Dispersión: Tamaño vs Presupuesto")
         if 'presupuesto_total_historico' in df_ent.columns and 'cantidad_contratos' in df_ent.columns:
             fig_scatter = px.scatter(
                 df_ent, 
@@ -157,36 +163,26 @@ with tab1:
                 size='cantidad_contratos',
                 color='departamento_base' if 'departamento_base' in df_ent.columns else None,
                 hover_name='nombre_entidad_normalizado',
-                log_y=True,
-                title="Dispersión: Tamaño vs Presupuesto (Log)"
+                log_y=True
             )
             st.plotly_chart(fig_scatter, use_container_width=True)
 
-# === PESTAÑA 2: ENTIDADES (TABLA FULL) ===
+# === PESTAÑA 2: ENTIDADES ===
 with tab2:
     st.subheader("🔍 Ranking de Entidades")
-    
-    cols_to_show = ['nombre_entidad_normalizado', 'presupuesto_total_historico', 'cantidad_contratos', 'departamento_base']
-    cols_to_show = [c for c in cols_to_show if c in df_ent.columns]
+    cols = ['nombre_entidad_normalizado', 'presupuesto_total_historico', 'cantidad_contratos', 'departamento_base']
+    cols = [c for c in cols if c in df_ent.columns]
     
     if 'presupuesto_total_historico' in df_ent.columns:
-        df_sorted = df_ent.sort_values('presupuesto_total_historico', ascending=False)
-        st.dataframe(
-            df_sorted[cols_to_show].style.format({'presupuesto_total_historico': '${:,.0f}'}),
-            use_container_width=True,
-            height=500
-        )
+        st.dataframe(df_ent.sort_values('presupuesto_total_historico', ascending=False)[cols], use_container_width=True)
     else:
         st.dataframe(df_ent)
 
 # === PESTAÑA 3: CONTRATISTAS ===
 with tab3:
     st.subheader("🏆 Top Contratistas")
-    
     if not df_con.empty and 'valor_total_historico' in df_con.columns:
-        # Limpieza rápida
         df_con['valor_total_historico'] = pd.to_numeric(df_con['valor_total_historico'], errors='coerce').fillna(0)
-        
         top_con = df_con.nlargest(20, 'valor_total_historico')
         
         fig_con = px.bar(
@@ -194,18 +190,16 @@ with tab3:
             x='valor_total_historico',
             y=top_con['doc_proveedor'].astype(str),
             orientation='h',
-            title="Top 20 Contratistas por Monto Adjudicado",
+            title="Top 20 Contratistas",
             color='valor_total_historico',
             color_continuous_scale='Viridis'
         )
         fig_con.update_layout(yaxis={'categoryorder':'total ascending'})
         st.plotly_chart(fig_con, use_container_width=True)
-        
-        st.write("Datos detallados:")
         st.dataframe(df_con.head(100))
     else:
-        st.warning("No hay datos suficientes de contratistas.")
+        st.warning("Sin datos de contratistas.")
 
 # Footer
 st.markdown("---")
-st.caption("Desarrollado con Tecnología EULER © 2026 | Datos SECOP II")
+st.caption("EULER © 2026")
