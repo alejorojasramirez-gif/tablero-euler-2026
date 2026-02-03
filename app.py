@@ -1,12 +1,10 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import os
-import numpy as np
 
 # ==========================================
-# 1. CONFIGURACIÓN DE PÁGINA (ESTILO PREMIUM)
+# 1. CONFIGURACIÓN VISUAL (TU DISEÑO EXACTO)
 # ==========================================
 st.set_page_config(
     page_title="EULER RISK 360",
@@ -15,10 +13,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CSS PERSONALIZADO (TU DISEÑO) ---
+# --- CSS PERSONALIZADO (Estilo Premium del archivo original) ---
 st.markdown("""
 <style>
-    /* FUENTE: Inter (Moderna y Limpia) */
+    /* FUENTE MODERNA */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap');
     
     html, body, [class*="css"] { 
@@ -37,7 +35,7 @@ st.markdown("""
         border-right: 1px solid #E2E8F0;
     }
     
-    /* TARJETAS KPI (ESTILO "GLASS") */
+    /* TARJETAS KPI */
     .metric-card {
         background: white;
         padding: 24px;
@@ -69,11 +67,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. CARGA DE DATOS (CONECTADO A TUS CSVs)
+# 2. CARGA DE DATOS
 # ==========================================
 @st.cache_data
 def load_data():
-    # Nombres exactos de tus archivos en GitHub
     file_ent = "entidad_final.csv.gz"
     file_con = "contratista_final.csv.gz"
     
@@ -85,7 +82,6 @@ def load_data():
         try:
             df_ent = pd.read_csv(file_ent, sep=";", compression="gzip", encoding='utf-8')
         except:
-            # Plan B: Intentar con coma
             df_ent = pd.read_csv(file_ent, sep=",", compression="gzip", encoding='utf-8')
 
     # Cargar Contratistas
@@ -99,16 +95,14 @@ def load_data():
 
 df_ent, df_con = load_data()
 
-# Validación de Seguridad
 if df_ent.empty:
-    st.error("⚠️ Error Crítico: No se pudieron leer los datos. Verifica los archivos .csv.gz en GitHub.")
+    st.error("⚠️ Error: No se pudieron leer los datos.")
     st.stop()
 
 # ==========================================
 # 3. SIDEBAR (LOGO Y FILTROS)
 # ==========================================
 with st.sidebar:
-    # LOGO (Ahora confiamos en que está bien)
     if os.path.exists("LogoEuler.png"):
         st.image("LogoEuler.png", use_column_width=True)
     else:
@@ -124,29 +118,18 @@ with st.sidebar:
         if sel_depto != "Todos":
             df_ent = df_ent[df_ent['departamento_base'] == sel_depto]
 
-    # Filtro: Riesgo
-    if 'exposicion_riesgo_legal' in df_ent.columns:
-        st.markdown("### ⚖️ Nivel de Riesgo")
-        riesgo_sel = st.slider("Filtrar por % Riesgo", 0, 100, (0, 100))
-        df_ent = df_ent[
-            (df_ent['exposicion_riesgo_legal'] >= riesgo_sel[0]) & 
-            (df_ent['exposicion_riesgo_legal'] <= riesgo_sel[1])
-        ]
-
     st.markdown("---")
     st.info(f"🏢 Entidades: {len(df_ent):,}")
-    st.caption("v.2026.1 | EULER ANALYTICS")
 
 # ==========================================
-# 4. DASHBOARD (TU DISEÑO EXACTO)
+# 4. DASHBOARD (TU ESQUEMA ORIGINAL)
 # ==========================================
 
-# Título Principal
 st.title("EULER RISK 360™")
 st.markdown("**Plataforma de Inteligencia Artificial para Auditoría Pública**")
 st.markdown("---")
 
-# --- KPIS (TARJETAS) ---
+# --- KPIS ---
 k1, k2, k3, k4 = st.columns(4)
 
 def kpi(col, label, value, color="#0F172A"):
@@ -157,21 +140,21 @@ def kpi(col, label, value, color="#0F172A"):
     </div>
     """, unsafe_allow_html=True)
 
-# Cálculos
+# Cálculos seguros
 total_pres = df_ent['presupuesto_total_historico'].sum() if 'presupuesto_total_historico' in df_ent.columns else 0
 riesgo_avg = df_ent['exposicion_riesgo_legal'].mean() if 'exposicion_riesgo_legal' in df_ent.columns else 0
 
-kpi(k1, "Entidades Vigiladas", f"{len(df_ent):,}", "#2563EB") # Azul
-kpi(k2, "Contratistas", f"{len(df_con):,}", "#475569") # Gris
-kpi(k3, "Presupuesto Total", f"${total_pres/1e12:,.1f}B", "#16A34A") # Verde
-kpi(k4, "Riesgo Promedio", f"{riesgo_avg:.1f}%", "#DC2626" if riesgo_avg > 50 else "#F59E0B") # Rojo/Naranja
+kpi(k1, "Entidades Vigiladas", f"{len(df_ent):,}", "#2563EB")
+kpi(k2, "Contratistas", f"{len(df_con):,}", "#475569")
+kpi(k3, "Presupuesto Total", f"${total_pres/1e12:,.1f}B", "#16A34A")
+kpi(k4, "Riesgo Promedio", f"{riesgo_avg:.1f}%", "#DC2626" if riesgo_avg > 50 else "#F59E0B")
 
 st.markdown("<br>", unsafe_allow_html=True)
 
 # --- PESTAÑAS ---
 tabs = st.tabs(["🚨 RADAR DE RIESGOS", "🩻 RAYOS X (DETALLE)", "🗺️ MAPA DE CALOR"])
 
-# === TAB 1: RADAR ===
+# === TAB 1: RADAR (Aquí estaba el error) ===
 with tabs[0]:
     c1, c2 = st.columns([2, 1])
     with c1:
@@ -196,12 +179,13 @@ with tabs[0]:
             med = len(df_ent[(df_ent['exposicion_riesgo_legal'] < 70) & (df_ent['exposicion_riesgo_legal'] >= 30)])
             baj = len(df_ent[df_ent['exposicion_riesgo_legal'] < 30])
             
-            fig_pie = px.donut(
+            # --- CORRECCIÓN AQUÍ: px.pie en lugar de px.donut ---
+            fig_pie = px.pie(
                 values=[crit, med, baj], 
                 names=['🔴 Crítico', '🟡 Medio', '🟢 Bajo'],
                 color=['🔴 Crítico', '🟡 Medio', '🟢 Bajo'],
                 color_discrete_map={'🔴 Crítico':'#EF4444', '🟡 Medio':'#F59E0B', '🟢 Bajo':'#10B981'},
-                hole=0.6
+                hole=0.6 # Esto es lo que lo hace una dona
             )
             st.plotly_chart(fig_pie, use_container_width=True)
 
@@ -215,13 +199,16 @@ with tabs[1]:
     
     df_show = df_ent[cols_ok].copy()
     
-    # Configuración de Columnas (Iconos y Barras)
+    # Configuración de Columnas (Estilo App original)
     cfg = {
         "nombre_entidad_normalizado": st.column_config.TextColumn("Entidad", width="large"),
         "presupuesto_total_historico": st.column_config.NumberColumn("Presupuesto", format="$%d"),
         "cantidad_contratos": st.column_config.NumberColumn("Contratos"),
         "exposicion_riesgo_legal": st.column_config.ProgressColumn(
-            "Nivel de Riesgo", format="%.1f%%", min_value=0, max_value=100
+            "Nivel de Riesgo", 
+            format="%.1f%%", 
+            min_value=0, 
+            max_value=100
         )
     }
     
