@@ -73,7 +73,7 @@ def parse_json(val):
     except: return {}
 
 # ==========================================
-# 2. CARGA DE DATOS ROBUSTA (QA CHECKED)
+# 2. CARGA DE DATOS ROBUSTA
 # ==========================================
 @st.cache_data
 def load_data():
@@ -93,46 +93,50 @@ def load_data():
         try: df_con = pd.read_csv(file_con, sep=";", compression="gzip", encoding='utf-8')
         except: df_con = pd.read_csv(file_con, sep=",", compression="gzip", encoding='utf-8')
 
-    # --- NORMALIZACIÓN DE COLUMNAS (FIX: KEYERROR PREVENTIVO) ---
+    # --- NORMALIZACIÓN DE COLUMNAS (FIX: NOMBRES Y AFILIACIÓN) ---
     if not df_ent.empty:
         # Renombrar para estandarizar
         if 'nombre_entidad' in df_ent.columns and 'nombre_entidad_normalizado' not in df_ent.columns:
             df_ent.rename(columns={'nombre_entidad': 'nombre_entidad_normalizado'}, inplace=True)
             
     if not df_con.empty:
-        # Asegurar columna Proveedor
-        if 'nom_proveedor' not in df_con.columns:
-            candidates = ['nom_contratista', 'nombre_contratista', 'proveedor', 'razon_social']
-            for c in candidates:
-                if c in df_con.columns:
-                    df_con['nom_proveedor'] = df_con[c]
-                    break
-            if 'nom_proveedor' not in df_con.columns: 
-                df_con['nom_proveedor'] = "Desconocido"
-
-        # Asegurar columna Riesgo
-        if 'Riesgo' not in df_con.columns:
-            # Buscar columnas posibles
-            col_found = None
-            for c in ['alerta_legal_ss', 'alerta_riesgo_legal', 'nivel_riesgo']:
-                if c in df_con.columns:
-                    col_found = c
-                    break
-            
-            if col_found:
-                df_con['Riesgo'] = df_con[col_found].fillna('OK').astype(str).str.upper()
-                validos = ['CRÍTICA', 'ALTA', 'MEDIA', 'BAJA', 'OK']
-                df_con['Riesgo'] = df_con['Riesgo'].apply(lambda x: x if x in validos else 'OK')
-            else:
-                df_con['Riesgo'] = 'OK'
+        # 1. Asegurar columna Proveedor (FIX: Busca todas las opciones posibles)
+        col_prov = None
+        for c in ['nom_proveedor', 'nom_contratista', 'nombre_contratista', 'proveedor', 'razon_social']:
+            if c in df_con.columns:
+                col_prov = c
+                break
         
-        # Asegurar año para gráficas
-        if 'anio_ultimo_contrato' not in df_con.columns:
-            df_con['anio_ultimo_contrato'] = 2024 # Valor por defecto si falta
+        if col_prov:
+            df_con['nom_proveedor'] = df_con[col_prov].fillna("Desconocido")
+        else:
+            df_con['nom_proveedor'] = "Desconocido"
+
+        # 2. Asegurar columna Riesgo
+        col_riesgo = None
+        for c in ['Riesgo', 'alerta_legal_ss', 'alerta_riesgo_legal', 'nivel_riesgo']:
+            if c in df_con.columns:
+                col_riesgo = c
+                break
+        
+        if col_riesgo:
+            df_con['Riesgo'] = df_con[col_riesgo].fillna('OK').astype(str).str.upper()
+            validos = ['CRÍTICA', 'ALTA', 'MEDIA', 'BAJA', 'OK']
+            df_con['Riesgo'] = df_con['Riesgo'].apply(lambda x: x if x in validos else 'OK')
+        else:
+            df_con['Riesgo'] = 'OK'
             
-        # Asegurar columnas de Afiliación
-        if 'estado_afiliacion' not in df_con.columns: df_con['estado_afiliacion'] = 'Sin Dato'
+        # 3. Asegurar Afiliación (FIX: Rellena vacíos)
+        if 'estado_afiliacion' not in df_con.columns: 
+            df_con['estado_afiliacion'] = 'Sin Dato'
+        else:
+            df_con['estado_afiliacion'] = df_con['estado_afiliacion'].fillna('Sin Dato')
+
         if 'regimen' not in df_con.columns: df_con['regimen'] = 'Sin Dato'
+        
+        # 4. Asegurar año
+        if 'anio_ultimo_contrato' not in df_con.columns:
+            df_con['anio_ultimo_contrato'] = 2024 
 
     return df_ent, df_con
 
@@ -178,7 +182,6 @@ if menu == "Home":
     k1.metric("Entidades Vigiladas", f"{len(df_ent):,}")
     k2.metric("Base Contratistas", f"{len(df_con):,}")
     
-    # FIX: Syntax error corregido aquí
     criticos = len(df_con[df_con['Riesgo']=='CRÍTICA']) if 'Riesgo' in df_con.columns else 0
     k3.metric("Alertas Críticas", f"{criticos:,}", delta_color="inverse")
     
@@ -208,7 +211,7 @@ elif menu == "Contratos Secop":
     
     st.markdown("---")
 
-    # 1. GRÁFICA DE BARRAS APILADAS (FIX: AHORA SÍ MUESTRA EVOLUCIÓN)
+    # 1. GRÁFICA DE BARRAS APILADAS
     g1, g2 = st.columns(2)
     
     with g1:
@@ -227,7 +230,7 @@ elif menu == "Contratos Secop":
         else:
             st.warning("No hay datos de año disponibles.")
 
-    # 2. TOP ENTIDADES (FIX: AGREGADA LA GRÁFICA DE CANTIDAD)
+    # 2. TOP ENTIDADES (PRESUPUESTO Y CANTIDAD)
     with g2:
         st.subheader("🏆 Top Entidades")
         tab_money, tab_qty = st.tabs(["💰 Por Presupuesto", "#️⃣ Por Cantidad"])
@@ -269,7 +272,7 @@ elif menu == "Contratos Secop":
 elif menu == "Entidades":
     st.title("🏢 Auditoría por Entidad")
     
-    # 1. GRÁFICAS DE DISTRIBUCIÓN (FIX: AGREGADAS)
+    # 1. GRÁFICAS DE DISTRIBUCIÓN
     r1, r2 = st.columns(2)
     with r1:
         st.markdown("**Distribución por Municipio**")
@@ -332,41 +335,49 @@ elif menu == "Entidades":
         st.write("Nivel de Exposición al Riesgo:")
         st.progress(min(float(risk)/100, 1.0))
 
-        # GRÁFICA EVOLUCIÓN (FIX: AÑOS LIMPIOS)
+        # GRÁFICA EVOLUCIÓN
         st.subheader(f"📊 Comportamiento Anual: {sel_ent}")
         if 'json_evolucion_anual' in df_ent.columns:
             hist_data = parse_json(row['json_evolucion_anual'])
             if hist_data:
                 df_h = pd.DataFrame(list(hist_data.items()), columns=['Año', 'Monto'])
-                # Limpieza de año: Convertir a string puro
                 df_h['Año'] = df_h['Año'].astype(str).str.replace(',', '').str.replace('.', '')
                 df_h = df_h[df_h['Año'].isin(['2023','2024','2025','2026'])].sort_values('Año')
                 
                 fig_bar = px.bar(df_h, x='Año', y='Monto', color='Monto', title="Ejecución Presupuestal")
-                fig_bar.update_xaxes(type='category') # Forzar que el eje X sea texto
+                fig_bar.update_xaxes(type='category')
                 st.plotly_chart(fig_bar, use_container_width=True)
             else:
                 st.info("Sin histórico anual disponible.")
 
-        # LISTA CONTRATISTAS (FIX: BLINDAJE CONTRA KEYERROR)
+        # LISTA CONTRATISTAS (FIX: NOMBRE PROVEEDOR Y AFILIACIÓN)
         st.subheader("👷 Contratistas Vinculados")
         if 'ultima_entidad_contratante' in df_con.columns:
             # Filtro flexible
             df_sub = df_con[df_con['ultima_entidad_contratante'].astype(str).str.contains(sel_ent, na=False, case=False)]
             
             if not df_sub.empty:
-                # Seleccionar solo las columnas que SI existen
-                cols_wanted = ['nom_proveedor', 'doc_proveedor', 'Riesgo', 'estado_afiliacion']
-                cols_present = [c for c in cols_wanted if c in df_sub.columns]
+                # Columnas explícitas solicitadas
+                df_display = df_sub.copy()
                 
-                st.dataframe(df_sub[cols_present], use_container_width=True)
+                # Mapeo de nombres para visualización
+                df_display = df_display.rename(columns={
+                    'nom_proveedor': 'Contratista',
+                    'doc_proveedor': 'NIT/Documento',
+                    'estado_afiliacion': 'Afiliación Salud'
+                })
+                
+                cols_view = ['Contratista', 'NIT/Documento', 'Riesgo', 'Afiliación Salud']
+                cols_final = [c for c in cols_view if c in df_display.columns]
+                
+                st.dataframe(df_display[cols_final], use_container_width=True)
             else:
                 st.info("No se encontraron contratistas directos en la base.")
     else:
         st.info("Seleccione una entidad para ver detalles.")
 
 # ==========================================
-# SECCIÓN 4: AFILIACIONES (INTACTO)
+# SECCIÓN 4: AFILIACIONES (FIX: TABLA MAESTRA)
 # ==========================================
 elif menu == "Afiliaciones":
     st.title("🏥 Control de Seguridad Social")
@@ -388,38 +399,64 @@ elif menu == "Afiliaciones":
 
     st.markdown("---")
 
-    # 2. SEMÁFORO DE CUMPLIMIENTO
+    # 2. TABLA MAESTRA DE AUDITORÍA (Diseño solicitado)
     st.subheader("🚨 Semáforo de Cumplimiento por Entidad")
     
     if 'ultima_entidad_contratante' in df_con.columns and 'Riesgo' in df_con.columns:
-        # Preparación de datos
-        df_con['crit'] = (df_con['Riesgo']=='CRÍTICA').astype(int)
-        df_con['ok'] = (df_con['Riesgo']=='OK').astype(int)
+        # Variables Dummy para conteo
+        df_con['is_crit'] = (df_con['Riesgo'] == 'CRÍTICA').astype(int)
+        df_con['is_high'] = (df_con['Riesgo'] == 'ALTA').astype(int)
+        df_con['is_med'] = (df_con['Riesgo'] == 'MEDIA').astype(int)
+        df_con['is_ok'] = (df_con['Riesgo'] == 'OK').astype(int)
         
-        board = df_con.groupby('ultima_entidad_contratante')[['crit', 'ok']].sum().reset_index()
-        board['Total'] = df_con.groupby('ultima_entidad_contratante')['Riesgo'].count().values
-        board['Cumplimiento'] = (board['ok'] / board['Total']) * 100
-        board['Cumplimiento'] = board['Cumplimiento'].fillna(0)
+        # Agrupación
+        board = df_con.groupby('ultima_entidad_contratante')[['is_crit', 'is_high', 'is_med', 'is_ok']].sum().reset_index()
         
-        # Filtro tabla
-        filtro_tabla = st.text_input("Filtrar Entidad en la tabla:", placeholder="Escribe para buscar...")
-        if filtro_tabla:
-            board = board[board['ultima_entidad_contratante'].str.contains(filtro_tabla, case=False, na=False)]
-            
-        # Iconos
-        def get_icon(val):
-            return "🟢" if val >= 90 else "🟡" if val >= 50 else "🔴"
+        # Columnas calculadas
+        board['Total Contratos'] = board['is_crit'] + board['is_high'] + board['is_med'] + board['is_ok']
+        board['Total Alertas'] = board['is_crit'] + board['is_high'] + board['is_med']
+        board['% Cumplimiento'] = (board['is_ok'] / board['Total Contratos']) * 100
+        board['% Cumplimiento'] = board['% Cumplimiento'].fillna(0)
         
-        board['Estado'] = board['Cumplimiento'].apply(get_icon)
-        board = board.sort_values('Cumplimiento', ascending=True)
+        # Semáforo
+        def get_traffic_light(val):
+            if val >= 90: return "🟢"
+            if val >= 50: return "🟡"
+            return "🔴"
         
+        board['Semáforo'] = board['% Cumplimiento'].apply(get_traffic_light)
+        
+        # Filtro de texto
+        txt_filter = st.text_input("Filtrar Entidad en la tabla:", "")
+        if txt_filter:
+            board = board[board['ultima_entidad_contratante'].str.contains(txt_filter, case=False, na=False)]
+        
+        # Ordenar por % Cumplimiento ascendente (Lo peor primero)
+        board = board.sort_values('% Cumplimiento', ascending=True)
+        
+        # Mostrar tabla con columnas exactas
         st.dataframe(
-            board[['ultima_entidad_contratante', 'Total', 'crit', 'Cumplimiento', 'Estado']],
+            board,
+            column_order=[
+                'ultima_entidad_contratante', 
+                'Total Contratos', 
+                'is_crit', 
+                'is_high', 
+                'is_med', 
+                'is_ok', 
+                'Total Alertas', 
+                '% Cumplimiento', 
+                'Semáforo'
+            ],
             column_config={
                 "ultima_entidad_contratante": st.column_config.TextColumn("Entidad", width="large"),
-                "crit": st.column_config.NumberColumn("Alertas Críticas"),
-                "Cumplimiento": st.column_config.ProgressColumn("% Cumplimiento", format="%.1f%%", min_value=0, max_value=100),
-                "Estado": st.column_config.TextColumn("Semáforo", width="small")
+                "is_crit": st.column_config.NumberColumn("🔴 Críticos"),
+                "is_high": st.column_config.NumberColumn("🟠 Altos"),
+                "is_med": st.column_config.NumberColumn("🟡 Medios"),
+                "is_ok": st.column_config.NumberColumn("🟢 OK"),
+                "Total Alertas": st.column_config.NumberColumn("⚠️ Total Alertas"),
+                "% Cumplimiento": st.column_config.ProgressColumn("Cumplimiento", format="%.1f%%", min_value=0, max_value=100),
+                "Semáforo": st.column_config.TextColumn("Estado", width="small")
             },
             use_container_width=True,
             hide_index=True
