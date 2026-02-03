@@ -1,10 +1,12 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import json
 import os
+import numpy as np
 
 # ==========================================
-# 1. CONFIGURACIÓN VISUAL (TU DISEÑO EXACTO)
+# 1. CONFIGURACIÓN VISUAL (MODO PREMIUM)
 # ==========================================
 st.set_page_config(
     page_title="EULER RISK 360",
@@ -13,7 +15,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CSS PERSONALIZADO (Estilo Premium del archivo original) ---
+# --- INYECCIÓN DE CSS "WOW" ---
 st.markdown("""
 <style>
     /* FUENTE MODERNA */
@@ -24,50 +26,79 @@ st.markdown("""
         color: #1E293B; 
     }
     
-    /* FONDO DEGRADADO */
+    /* FONDO DEGRADADO SUTIL */
     .stApp { 
-        background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%); 
+        background: linear-gradient(180deg, #FFFFFF 0%, #F1F5F9 100%); 
     }
     
-    /* SIDEBAR */
+    /* SIDEBAR ELEGANTE */
     section[data-testid="stSidebar"] {
         background-color: #FFFFFF;
         border-right: 1px solid #E2E8F0;
+        box-shadow: 4px 0 24px rgba(0,0,0,0.02);
     }
     
-    /* TARJETAS KPI */
-    .metric-card {
-        background: white;
-        padding: 24px;
+    /* TARJETAS KPI FLOTANTES */
+    div[data-testid="metric-container"] {
+        background: #FFFFFF;
+        border: 1px solid #F1F5F9;
+        padding: 20px;
         border-radius: 16px;
-        border: 1px solid #E2E8F0;
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
-        text-align: center;
         transition: all 0.3s ease;
     }
-    .metric-card:hover {
+    div[data-testid="metric-container"]:hover {
         transform: translateY(-5px);
         box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
-        border-color: #3B82F6;
+        border-color: #06B6D4;
     }
-    .metric-value {
-        font-size: 32px;
-        font-weight: 800;
-        color: #0F172A;
-        margin: 10px 0;
+    
+    /* TITULOS CON DEGRADADO */
+    h1, h2, h3 {
+        background: linear-gradient(135deg, #06B6D4 0%, #3B82F6 50%, #7C3AED 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-weight: 800 !important;
     }
-    .metric-label {
-        font-size: 13px;
-        font-weight: 600;
+    
+    /* HERO SECTION DEL HOME */
+    .hero-container {
+        text-align: center;
+        padding: 40px 20px;
+        background: radial-gradient(circle at center, rgba(6,182,212,0.05) 0%, rgba(255,255,255,0) 70%);
+        border-radius: 20px;
+        margin-bottom: 20px;
+    }
+    .hero-title {
+        font-size: 60px;
+        font-weight: 900;
+        margin: 0;
+        background: linear-gradient(90deg, #00C9FF 0%, #92FE9D 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+    .hero-subtitle {
+        font-size: 20px;
         color: #64748B;
-        text-transform: uppercase;
-        letter-spacing: 1px;
+        margin-top: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
 
+# --- FUNCIONES AUXILIARES ---
+def fmt_cop(val):
+    if pd.isna(val): return "$0"
+    if val >= 1e12: return f"${val/1e12:,.2f}B"
+    if val >= 1e9: return f"${val/1e9:,.1f}MM"
+    if val >= 1e6: return f"${val/1e6:,.1f}M"
+    return f"${val:,.0f}"
+
+def parse_json(val):
+    try: return json.loads(str(val).replace("'", '"'))
+    except: return {}
+
 # ==========================================
-# 2. CARGA DE DATOS
+# 2. CARGA DE DATOS (LA PARTE CLAVE)
 # ==========================================
 @st.cache_data
 def load_data():
@@ -77,155 +108,228 @@ def load_data():
     df_ent = pd.DataFrame()
     df_con = pd.DataFrame()
 
-    # Cargar Entidades
+    # 1. Cargar Entidades
     if os.path.exists(file_ent):
         try:
             df_ent = pd.read_csv(file_ent, sep=";", compression="gzip", encoding='utf-8')
         except:
             df_ent = pd.read_csv(file_ent, sep=",", compression="gzip", encoding='utf-8')
 
-    # Cargar Contratistas
+    # 2. Cargar Contratistas
     if os.path.exists(file_con):
         try:
             df_con = pd.read_csv(file_con, sep=";", compression="gzip", encoding='utf-8')
         except:
             df_con = pd.read_csv(file_con, sep=",", compression="gzip", encoding='utf-8')
             
+    # VALIDACIÓN DE COLUMNAS (NORMALIZACIÓN)
+    # Esto asegura que el código funcione aunque los nombres cambien un poco
+    if not df_ent.empty:
+        # Si no existe 'nombre_entidad_normalizado', buscamos alternativas
+        if 'nombre_entidad_normalizado' not in df_ent.columns and 'nombre_entidad' in df_ent.columns:
+            df_ent.rename(columns={'nombre_entidad': 'nombre_entidad_normalizado'}, inplace=True)
+            
+    if not df_con.empty:
+        # Normalizar proveedor
+        if 'nom_proveedor' not in df_con.columns:
+            for c in ['nom_contratista', 'nombre_contratista', 'proveedor', 'razon_social']:
+                if c in df_con.columns:
+                    df_con.rename(columns={c: 'nom_proveedor'}, inplace=True)
+                    break
+            if 'nom_proveedor' not in df_con.columns:
+                 df_con['nom_proveedor'] = "Desconocido"
+        
+        # Calcular Riesgo si no existe
+        if 'Riesgo' not in df_con.columns:
+            # Buscar columnas de alerta
+            col_riesgo = None
+            for c in ['alerta_legal_ss', 'alerta_riesgo_legal', 'nivel_riesgo']:
+                if c in df_con.columns:
+                    col_riesgo = c
+                    break
+            
+            if col_riesgo:
+                df_con['Riesgo'] = df_con[col_riesgo].fillna('OK').astype(str).str.upper()
+                # Limpiar valores extraños
+                validos = ['CRÍTICA', 'ALTA', 'MEDIA', 'BAJA', 'OK']
+                df_con['Riesgo'] = df_con['Riesgo'].apply(lambda x: x if x in validos else 'OK')
+            else:
+                df_con['Riesgo'] = 'OK' # Valor por defecto si no hay datos de riesgo
+
     return df_ent, df_con
 
 df_ent, df_con = load_data()
 
+# Si falla la carga, mostramos error elegante
 if df_ent.empty:
-    st.error("⚠️ Error: No se pudieron leer los datos.")
+    st.error("⚠️ No se encontraron datos. Verifica que los archivos .csv.gz estén en GitHub.")
     st.stop()
 
 # ==========================================
-# 3. SIDEBAR (LOGO Y FILTROS)
+# 3. INTERFAZ Y NAVEGACIÓN
 # ==========================================
+
 with st.sidebar:
-    if os.path.exists("LogoEuler.png"):
-        st.image("LogoEuler.png", use_column_width=True)
-    else:
-        st.markdown("## 🛡️ EULER RISK")
-        
-    st.markdown("---")
-    st.markdown("### 🎛️ Filtros Globales")
+    st.markdown("<br>", unsafe_allow_html=True)
     
-    # Filtro: Departamento
-    if 'departamento_base' in df_ent.columns:
-        deptos = sorted(df_ent['departamento_base'].dropna().astype(str).unique())
-        sel_depto = st.selectbox("📍 Departamento / Región", ["Todos"] + deptos)
-        if sel_depto != "Todos":
-            df_ent = df_ent[df_ent['departamento_base'] == sel_depto]
-
+    # LOGO SEGURO
+    if os.path.exists("LogoEuler.png"): 
+        st.image("LogoEuler.png", use_container_width=True)
+    else: 
+        st.markdown("<h2 style='text-align: center;'>🛡️ EULER</h2>", unsafe_allow_html=True)
+    
     st.markdown("---")
-    st.info(f"🏢 Entidades: {len(df_ent):,}")
+    st.caption("MENÚ PRINCIPAL")
+    
+    # NAVEGACIÓN LATERAL (ESTILO PREMIUM)
+    menu = st.radio(
+        "Ir a:", 
+        ["Home", "Contratos Secop", "Entidades", "Afiliaciones"],
+        label_visibility="collapsed"
+    )
+    
+    st.markdown("---")
+    st.info(f"📊 Datos cargados:\n- {len(df_ent)} Entidades\n- {len(df_con)} Contratistas")
 
-# ==========================================
-# 4. DASHBOARD (TU ESQUEMA ORIGINAL)
-# ==========================================
-
-st.title("EULER RISK 360™")
-st.markdown("**Plataforma de Inteligencia Artificial para Auditoría Pública**")
-st.markdown("---")
-
-# --- KPIS ---
-k1, k2, k3, k4 = st.columns(4)
-
-def kpi(col, label, value, color="#0F172A"):
-    col.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-label">{label}</div>
-        <div class="metric-value" style="color: {color}">{value}</div>
+# ================= SECCIÓN: HOME =================
+if menu == "Home":
+    st.markdown("""
+    <div class="hero-container">
+        <h1 class="hero-title">EULER 360</h1>
+        <p class="hero-subtitle">Plataforma de Inteligencia Artificial para Auditoría Pública</p>
     </div>
     """, unsafe_allow_html=True)
+    
+    # KPI CARDS
+    k1, k2, k3 = st.columns(3)
+    k1.metric("🏛️ Entidades Vigiladas", f"{len(df_ent):,}")
+    k2.metric("👥 Base Contratistas", f"{len(df_con):,}")
+    
+    criticos = len(df_con[df_con['Riesgo'] == 'CRÍTICA']) if 'Riesgo' in df_con.columns else 0
+    k3.metric("🚨 Alertas Críticas", f"{criticos:,}", delta_color="inverse")
 
-# Cálculos seguros
-total_pres = df_ent['presupuesto_total_historico'].sum() if 'presupuesto_total_historico' in df_ent.columns else 0
-riesgo_avg = df_ent['exposicion_riesgo_legal'].mean() if 'exposicion_riesgo_legal' in df_ent.columns else 0
-
-kpi(k1, "Entidades Vigiladas", f"{len(df_ent):,}", "#2563EB")
-kpi(k2, "Contratistas", f"{len(df_con):,}", "#475569")
-kpi(k3, "Presupuesto Total", f"${total_pres/1e12:,.1f}B", "#16A34A")
-kpi(k4, "Riesgo Promedio", f"{riesgo_avg:.1f}%", "#DC2626" if riesgo_avg > 50 else "#F59E0B")
-
-st.markdown("<br>", unsafe_allow_html=True)
-
-# --- PESTAÑAS ---
-tabs = st.tabs(["🚨 RADAR DE RIESGOS", "🩻 RAYOS X (DETALLE)", "🗺️ MAPA DE CALOR"])
-
-# === TAB 1: RADAR (Aquí estaba el error) ===
-with tabs[0]:
-    c1, c2 = st.columns([2, 1])
+    st.markdown("---")
+    st.subheader("📌 Resumen Ejecutivo")
+    
+    c1, c2 = st.columns(2)
     with c1:
-        st.subheader("Top 10 Entidades con Mayor Riesgo")
-        if 'exposicion_riesgo_legal' in df_ent.columns:
-            top_risk = df_ent.nlargest(10, 'exposicion_riesgo_legal').sort_values('exposicion_riesgo_legal', ascending=True)
-            fig = px.bar(
-                top_risk, x='exposicion_riesgo_legal', y='nombre_entidad_normalizado', orientation='h',
-                text='exposicion_riesgo_legal',
-                color='exposicion_riesgo_legal',
-                color_continuous_scale=['#10B981', '#F59E0B', '#EF4444']
-            )
-            fig.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
-            fig.update_layout(xaxis_title="Nivel de Riesgo (0-100)", yaxis_title=None)
-            st.plotly_chart(fig, use_container_width=True)
-            
+        st.info("Bienvenido al panel de control. Utilice el menú lateral para navegar entre los módulos de análisis.")
     with c2:
-        st.subheader("Alertas del Sistema")
-        if 'exposicion_riesgo_legal' in df_ent.columns:
-            # Lógica de Semáforo
-            crit = len(df_ent[df_ent['exposicion_riesgo_legal'] >= 70])
-            med = len(df_ent[(df_ent['exposicion_riesgo_legal'] < 70) & (df_ent['exposicion_riesgo_legal'] >= 30)])
-            baj = len(df_ent[df_ent['exposicion_riesgo_legal'] < 30])
+        if 'departamento_base' in df_ent.columns:
+            top_dep = df_ent['departamento_base'].mode()[0]
+            st.success(f"📍 Región con mayor actividad: **{top_dep}**")
+
+# ================= SECCIÓN: CONTRATOS SECOP =================
+elif menu == "Contratos Secop":
+    st.markdown("## 📊 Visión General de Contratación")
+    
+    # Filtro Rápido
+    riesgos_posibles = ['CRÍTICA', 'ALTA', 'MEDIA', 'OK']
+    sel_riesgo = st.multiselect("Filtrar por Nivel de Riesgo:", riesgos_posibles, default=riesgos_posibles)
+    
+    if 'Riesgo' in df_con.columns:
+        df_filtered = df_con[df_con['Riesgo'].isin(sel_riesgo)]
+    else:
+        df_filtered = df_con
+    
+    # Gráficas
+    c1, c2 = st.columns([2, 1])
+    
+    with c1:
+        st.subheader("💰 Evolución Presupuestal")
+        # Intentar graficar evolución si existe el JSON
+        if 'json_evolucion_anual' in df_ent.columns:
+            timeline = []
+            for j in df_ent['json_evolucion_anual']:
+                data = parse_json(j)
+                for y, v in data.items():
+                    if str(y) in ['2023', '2024', '2025', '2026']: 
+                        timeline.append({'Año': str(y), 'Valor': v})
             
-            # --- CORRECCIÓN AQUÍ: px.pie en lugar de px.donut ---
+            if timeline:
+                df_time = pd.DataFrame(timeline).groupby('Año').sum().reset_index().sort_values('Año')
+                fig_line = px.area(df_time, x='Año', y='Valor', title="Presupuesto Histórico Agregado")
+                st.plotly_chart(fig_line, use_container_width=True)
+            else:
+                st.info("No hay datos históricos temporales disponibles.")
+        else:
+            st.info("Columna de evolución anual no encontrada.")
+
+    with c2:
+        st.subheader("⚠️ Distribución de Riesgos")
+        if 'Riesgo' in df_filtered.columns:
+            counts = df_filtered['Riesgo'].value_counts().reset_index()
+            counts.columns = ['Riesgo', 'Cantidad']
             fig_pie = px.pie(
-                values=[crit, med, baj], 
-                names=['🔴 Crítico', '🟡 Medio', '🟢 Bajo'],
-                color=['🔴 Crítico', '🟡 Medio', '🟢 Bajo'],
-                color_discrete_map={'🔴 Crítico':'#EF4444', '🟡 Medio':'#F59E0B', '🟢 Bajo':'#10B981'},
-                hole=0.6 # Esto es lo que lo hace una dona
+                counts, values='Cantidad', names='Riesgo', 
+                color='Riesgo',
+                color_discrete_map={'CRÍTICA': '#EF4444', 'ALTA': '#F97316', 'MEDIA': '#FACC15', 'OK': '#10B981'},
+                hole=0.4
             )
             st.plotly_chart(fig_pie, use_container_width=True)
 
-# === TAB 2: RAYOS X (TU TABLA SEMÁFORO) ===
-with tabs[1]:
-    st.subheader("Matriz de Control Detallada")
+# ================= SECCIÓN: ENTIDADES =================
+elif menu == "Entidades":
+    st.markdown("## 🏢 Auditoría por Entidad")
     
-    # Columnas Clave
-    cols = ['nombre_entidad_normalizado', 'presupuesto_total_historico', 'cantidad_contratos', 'exposicion_riesgo_legal']
-    cols_ok = [c for c in cols if c in df_ent.columns]
+    # Buscador
+    all_ents = sorted(df_ent['nombre_entidad_normalizado'].astype(str).unique()) if 'nombre_entidad_normalizado' in df_ent.columns else []
+    sel_ent = st.selectbox("🔍 Seleccione una Entidad:", all_ents)
     
-    df_show = df_ent[cols_ok].copy()
-    
-    # Configuración de Columnas (Estilo App original)
-    cfg = {
-        "nombre_entidad_normalizado": st.column_config.TextColumn("Entidad", width="large"),
-        "presupuesto_total_historico": st.column_config.NumberColumn("Presupuesto", format="$%d"),
-        "cantidad_contratos": st.column_config.NumberColumn("Contratos"),
-        "exposicion_riesgo_legal": st.column_config.ProgressColumn(
-            "Nivel de Riesgo", 
-            format="%.1f%%", 
-            min_value=0, 
-            max_value=100
-        )
-    }
-    
-    st.dataframe(
-        df_show.sort_values('exposicion_riesgo_legal', ascending=False),
-        column_config=cfg,
-        use_container_width=True,
-        height=600
-    )
+    if sel_ent:
+        # Datos de la entidad seleccionada
+        row = df_ent[df_ent['nombre_entidad_normalizado'] == sel_ent].iloc[0]
+        
+        col_kpi, col_risk = st.columns(2)
+        with col_kpi:
+            pres = row.get('presupuesto_total_historico', 0)
+            st.metric("Presupuesto Total", fmt_cop(pres))
+            st.metric("Contratos", f"{row.get('cantidad_contratos', 0):,.0f}")
+        
+        with col_risk:
+            st.markdown("### Nivel de Riesgo Legal")
+            risk_val = row.get('exposicion_riesgo_legal', 0)
+            st.progress(min(float(risk_val)/100, 1.0))
+            st.caption(f"Exposición calculada: {risk_val:.1f}%")
 
-# === TAB 3: MAPA ===
-with tabs[2]:
-    st.subheader("Mapa de Presupuesto por Región")
-    if 'departamento_base' in df_ent.columns:
-        df_map = df_ent.groupby('departamento_base')[['presupuesto_total_historico']].sum().reset_index()
-        fig_tree = px.treemap(
-            df_map, path=['departamento_base'], values='presupuesto_total_historico',
-            color='presupuesto_total_historico', color_continuous_scale='Blues'
-        )
-        st.plotly_chart(fig_tree, use_container_width=True)
+# ================= SECCIÓN: AFILIACIONES (TABLA SEMÁFORO) =================
+elif menu == "Afiliaciones":
+    st.markdown("## 🏥 Control de Afiliaciones y Alertas")
+    
+    st.markdown("### 🚨 Semáforo de Cumplimiento por Entidad")
+    
+    if 'ultima_entidad_contratante' in df_con.columns and 'Riesgo' in df_con.columns:
+        # Preparamos los datos para el tablero
+        df_con['is_crit'] = (df_con['Riesgo'] == 'CRÍTICA').astype(int)
+        df_con['is_high'] = (df_con['Riesgo'] == 'ALTA').astype(int)
+        df_con['is_med'] = (df_con['Riesgo'] == 'MEDIA').astype(int)
+        df_con['is_ok'] = (df_con['Riesgo'] == 'OK').astype(int)
+        
+        board = df_con.groupby('ultima_entidad_contratante')[['is_crit', 'is_high', 'is_med', 'is_ok']].sum().reset_index()
+        board['Total'] = board['is_crit'] + board['is_high'] + board['is_med'] + board['is_ok']
+        
+        # Calcular porcentaje de cumplimiento (OK / Total)
+        board['pct_val'] = (board['is_ok'] / board['Total']) * 100
+        
+        # Lógica del Semáforo (Puntito de color)
+        def get_color_dot(val):
+            if val >= 99: return "🟢" # Excelente
+            if val >= 90: return "🟢" # Bueno
+            if val >= 50: return "🟡" # Regular
+            return "🔴" # Crítico
+        
+        board['Semáforo'] = board['pct_val'].apply(get_color_dot)
+        
+        # Filtro de texto
+        txt_f = st.text_input("Filtrar Entidad en la tabla:", "")
+        if txt_f: 
+            board = board[board['ultima_entidad_contratante'].str.contains(txt_f.upper(), na=False)]
+        
+        # Ordenar por críticos (para ver lo malo primero)
+        board = board.sort_values('is_crit', ascending=False)
+        
+        # MOSTRAR TABLA
+        st.dataframe(
+            board[['ultima_entidad_contratante', 'Total', 'is_crit', 'is_high', 'is_med', 'is_ok', 'pct_val', 'Semáforo']],
+            column_config={
+                "ultima_entidad_contratante
