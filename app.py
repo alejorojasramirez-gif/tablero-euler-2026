@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import json
 import numpy as np
+import os
 
 # --- CONFIGURACIÓN DE PÁGINA (Debe ser lo primero) ---
 st.set_page_config(
@@ -51,37 +52,24 @@ def load_data():
 
     return df_ent, df_con
 
-# --- PROCESAMIENTO DE JSON (Para gráficas avanzadas) ---
-def parse_json_column(df, column_name):
-    """Convierte columnas de texto JSON en DataFrames usables"""
-    if column_name not in df.columns:
-        return pd.DataFrame()
-    
-    data_list = []
-    for index, row in df.iterrows():
-        try:
-            val = row[column_name]
-            if isinstance(val, str):
-                val = val.replace("'", '"') # Corregir comillas simples
-                parsed = json.loads(val)
-                if isinstance(parsed, dict):
-                    parsed['entidad'] = row.get('nombre_entidad_normalizado', f"Entidad {index}")
-                    data_list.append(parsed)
-        except:
-            continue
-    return pd.DataFrame(data_list)
-
 # --- CARGA ---
 df_ent, df_con = load_data()
 
 if df_ent.empty:
-    st.error("⚠️ No se pudieron cargar los datos. Revisa los archivos en GitHub.")
+    st.error("⚠️ No se pudieron cargar los datos. Revisa que los archivos 'entidad_final.csv.gz' y 'contratista_final.csv.gz' estén en GitHub.")
     st.stop()
 
 # ==============================================================================
 #                             SIDEBAR (FILTROS)
 # ==============================================================================
-st.sidebar.image("LogoEuler.png", use_column_width=True) if "LogoEuler.png" in st.sidebar else None
+
+# --- CORRECCIÓN DEL LOGO ---
+if os.path.exists("LogoEuler.png"):
+    st.sidebar.image("LogoEuler.png", use_column_width=True)
+else:
+    st.sidebar.markdown("## 📊 EULER")
+# ---------------------------
+
 st.sidebar.title("🔍 Panel de Control")
 
 # Filtro 1: Departamento
@@ -94,19 +82,22 @@ if 'departamento_base' in df_ent.columns:
 
 # Filtro 2: Rango de Presupuesto
 if 'presupuesto_total_historico' in df_ent.columns:
-    min_val = float(df_ent['presupuesto_total_historico'].min())
-    max_val = float(df_ent['presupuesto_total_historico'].max())
-    
-    # Usamos logaritmo para sliders de dinero porque los rangos son gigantes
-    val_range = st.sidebar.slider(
-        "💰 Rango de Presupuesto (Millones)",
-        min_value=0.0,
-        max_value=max_val/1_000_000,
-        value=(0.0, max_val/1_000_000)
-    )
-    mask = (df_ent['presupuesto_total_historico'] >= val_range[0]*1_000_000) & \
-           (df_ent['presupuesto_total_historico'] <= val_range[1]*1_000_000)
-    df_ent = df_ent[mask]
+    try:
+        min_val = float(df_ent['presupuesto_total_historico'].min())
+        max_val = float(df_ent['presupuesto_total_historico'].max())
+        
+        if max_val > 0:
+            val_range = st.sidebar.slider(
+                "💰 Rango de Presupuesto (Millones)",
+                min_value=0.0,
+                max_value=max_val/1_000_000,
+                value=(0.0, max_val/1_000_000)
+            )
+            mask = (df_ent['presupuesto_total_historico'] >= val_range[0]*1_000_000) & \
+                   (df_ent['presupuesto_total_historico'] <= val_range[1]*1_000_000)
+            df_ent = df_ent[mask]
+    except:
+        pass # Si falla el slider, no mostramos nada pero no rompemos la app
 
 st.sidebar.markdown("---")
 st.sidebar.info(f"Mostrando {len(df_ent)} entidades filtradas.")
@@ -132,7 +123,6 @@ with col3:
     st.metric("💰 Presupuesto ($COP)", f"${val:,.0f}")
 
 with col4:
-    # Calcular promedio de riesgo legal si existe
     if 'exposicion_riesgo_legal' in df_ent.columns:
         riesgo = df_ent['exposicion_riesgo_legal'].mean()
         st.metric("⚖️ Riesgo Legal Prom.", f"{riesgo:.1f}%")
@@ -153,22 +143,12 @@ with tab1:
         if 'departamento_base' in df_ent.columns:
             conteo_depto = df_ent['departamento_base'].value_counts().reset_index()
             conteo_depto.columns = ['Departamento', 'Cantidad']
-            fig_map = px.bar(conteo_depto.head(10), x='Cantidad', y='Departamento', orientation='h', color='Cantidad', title="Top 10 Departamentos con más Entidades")
+            fig_map = px.bar(conteo_depto.head(10), x='Cantidad', y='Departamento', orientation='h', color='Cantidad', title="Top 10 Departamentos")
             fig_map.update_layout(yaxis={'categoryorder':'total ascending'})
             st.plotly_chart(fig_map, use_container_width=True)
 
     with c2:
-        st.subheader("Modalidad de Contratación (Global)")
-        # Intentar parsear el JSON de modalidades para hacer una gráfica real
-        if 'json_por_modalidad' in df_ent.columns:
-            try:
-                # Truco rápido: Sumar los textos JSON es muy difícil, usamos una aproximación visual simple o datos agregados
-                st.info("💡 Análisis de modalidades disponible en detalle por entidad.")
-                # Aquí podríamos expandir si tuviéramos tiempo de procesar todo el JSON globalmente
-            except:
-                pass
-        
-        # Gráfica alternativa: Presupuesto vs Cantidad
+        st.subheader("Presupuesto vs Cantidad de Contratos")
         if 'presupuesto_total_historico' in df_ent.columns and 'cantidad_contratos' in df_ent.columns:
             fig_scatter = px.scatter(
                 df_ent, 
@@ -178,7 +158,7 @@ with tab1:
                 color='departamento_base' if 'departamento_base' in df_ent.columns else None,
                 hover_name='nombre_entidad_normalizado',
                 log_y=True,
-                title="Relación: Cantidad de Contratos vs Presupuesto (Escala Log)"
+                title="Dispersión: Tamaño vs Presupuesto (Log)"
             )
             st.plotly_chart(fig_scatter, use_container_width=True)
 
@@ -186,26 +166,25 @@ with tab1:
 with tab2:
     st.subheader("🔍 Ranking de Entidades")
     
-    # Selector de columnas para la tabla
     cols_to_show = ['nombre_entidad_normalizado', 'presupuesto_total_historico', 'cantidad_contratos', 'departamento_base']
-    # Filtrar solo las que existen
     cols_to_show = [c for c in cols_to_show if c in df_ent.columns]
     
-    # Ordenar
-    df_sorted = df_ent.sort_values('presupuesto_total_historico', ascending=False)
-    
-    # Mostrar tabla interactiva
-    st.dataframe(
-        df_sorted[cols_to_show].style.format({'presupuesto_total_historico': '${:,.0f}'}),
-        use_container_width=True,
-        height=500
-    )
+    if 'presupuesto_total_historico' in df_ent.columns:
+        df_sorted = df_ent.sort_values('presupuesto_total_historico', ascending=False)
+        st.dataframe(
+            df_sorted[cols_to_show].style.format({'presupuesto_total_historico': '${:,.0f}'}),
+            use_container_width=True,
+            height=500
+        )
+    else:
+        st.dataframe(df_ent)
 
 # === PESTAÑA 3: CONTRATISTAS ===
 with tab3:
     st.subheader("🏆 Top Contratistas")
     
     if not df_con.empty and 'valor_total_historico' in df_con.columns:
+        # Limpieza rápida
         df_con['valor_total_historico'] = pd.to_numeric(df_con['valor_total_historico'], errors='coerce').fillna(0)
         
         top_con = df_con.nlargest(20, 'valor_total_historico')
