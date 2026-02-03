@@ -47,7 +47,7 @@ def parse_json(val):
     except: return {}
 
 # ==========================================
-# 2. CARGA DE DATOS ROBUSTA
+# 2. CARGA DE DATOS (SUPER ROBUSTA)
 # ==========================================
 @st.cache_data
 def load_data():
@@ -57,81 +57,120 @@ def load_data():
     file_ent = "entidad_final.csv.gz"
     file_con = "contratista_final.csv.gz"
     
+    # Función interna para probar lecturas
+    def smart_read(file_path):
+        separators = [';', ',', '\t', '|']
+        encodings = ['utf-8', 'latin-1', 'ISO-8859-1']
+        
+        for enc in encodings:
+            for sep in separators:
+                try:
+                    # Leemos solo 2 líneas para ver si tiene sentido
+                    preview = pd.read_csv(file_path, sep=sep, compression='gzip', encoding=enc, nrows=2)
+                    if len(preview.columns) > 1: # Si detectó más de 1 columna, es probable que sea el separador correcto
+                        return pd.read_csv(file_path, sep=sep, compression='gzip', encoding=enc)
+                except:
+                    continue
+        return pd.DataFrame()
+
     # 1. Cargar Entidades
     if os.path.exists(file_ent):
-        try: df_ent = pd.read_csv(file_ent, sep=";", compression="gzip", encoding='utf-8')
-        except: df_ent = pd.read_csv(file_ent, sep=",", compression="gzip", encoding='utf-8')
+        df_ent = smart_read(file_ent)
     
     # 2. Cargar Contratistas
     if os.path.exists(file_con):
-        try: df_con = pd.read_csv(file_con, sep=";", compression="gzip", encoding='utf-8')
-        except: df_con = pd.read_csv(file_con, sep=",", compression="gzip", encoding='utf-8')
+        df_con = smart_read(file_con)
 
-    # --- NORMALIZACIÓN (FIX: MUNICIPIO Y PROVEEDOR) ---
+    # --- NORMALIZACIÓN DE COLUMNAS ---
+    # Convertimos todo a minúsculas para buscar mejor
     if not df_ent.empty:
-        # Nombre Normalizado
-        if 'nombre_entidad' in df_ent.columns and 'nombre_entidad_normalizado' not in df_ent.columns:
-            df_ent.rename(columns={'nombre_entidad': 'nombre_entidad_normalizado'}, inplace=True)
+        df_ent.columns = [c.strip() for c in df_ent.columns] # Quitar espacios
         
-        # FIX MUNICIPIO: Buscar la columna correcta
-        col_muni = None
-        for c in ['municipio_limpio', 'municipio_base', 'ciudad', 'municipio']:
-            if c in df_ent.columns:
-                col_muni = c
+        # Buscar Nombre Entidad
+        if 'nombre_entidad_normalizado' not in df_ent.columns:
+            # Buscar alternativas
+            cols_ent = [c for c in df_ent.columns if 'nombre' in c.lower() and 'entidad' in c.lower()]
+            if cols_ent: df_ent.rename(columns={cols_ent[0]: 'nombre_entidad_normalizado'}, inplace=True)
+            else: df_ent['nombre_entidad_normalizado'] = "Entidad Desconocida"
+
+        # Buscar Municipio (Prioridad: Limpio -> Base -> Ciudad)
+        col_muni_found = None
+        for cand in ['municipio_limpio', 'municipio_base', 'ciudad', 'municipio', 'ubicacion']:
+            if cand in df_ent.columns:
+                col_muni_found = cand
                 break
         
-        # Creamos una columna estándar para la gráfica
-        if col_muni:
-            df_ent['municipio_grafica'] = df_ent[col_muni]
+        if col_muni_found:
+            df_ent['municipio_grafica'] = df_ent[col_muni_found].fillna("No Definido")
         else:
-            df_ent['municipio_grafica'] = 'No Definido'
+            # Si no encuentra, usa Departamento
+            if 'departamento_base' in df_ent.columns:
+                df_ent['municipio_grafica'] = df_ent['departamento_base'] + " (Depto)"
+            else:
+                df_ent['municipio_grafica'] = "Indeterminado"
 
     if not df_con.empty:
-        # FIX PROVEEDOR: Búsqueda agresiva del nombre
-        col_prov = None
-        # Lista de posibles nombres en la base de datos
-        posibles_nombres = ['nom_proveedor', 'nom_contratista', 'nombre_contratista', 'proveedor', 'razon_social', 'nombre_razon_social']
+        df_con.columns = [c.strip() for c in df_con.columns]
         
-        for c in posibles_nombres:
+        # 1. Buscar PROVEEDOR (Búsqueda amplia)
+        col_prov = None
+        candidates_prov = ['nom_proveedor', 'nom_contratista', 'nombre_contratista', 'razon_social', 'proveedor', 'nombre', 'contratista']
+        for c in candidates_prov:
             if c in df_con.columns:
                 col_prov = c
                 break
         
         if col_prov:
-            df_con['nom_proveedor_final'] = df_con[col_prov].fillna("Desconocido")
+            df_con['nom_proveedor_final'] = df_con[col_prov].fillna("Sin Nombre")
         else:
-            df_con['nom_proveedor_final'] = "Sin Nombre Registrado"
+            # Si no encuentra columna de nombre, coge la segunda columna del archivo (heurística)
+            if len(df_con.columns) > 1:
+                 df_con['nom_proveedor_final'] = df_con.iloc[:, 1].fillna("Desconocido")
+            else:
+                 df_con['nom_proveedor_final'] = "Error Lectura"
 
-        # Riesgo
-        col_riesgo = None
-        for c in ['Riesgo', 'alerta_legal_ss', 'alerta_riesgo_legal', 'nivel_riesgo']:
-            if c in df_con.columns:
-                col_riesgo = c
+        # 2. Buscar RIESGO
+        col_risk = None
+        candidates_risk = ['riesgo', 'alerta_legal_ss', 'alerta_riesgo_legal', 'nivel_riesgo', 'alerta']
+        for c in candidates_risk:
+            matches = [col for col in df_con.columns if c in col.lower()]
+            if matches:
+                col_risk = matches[0]
                 break
         
-        if col_riesgo:
-            df_con['Riesgo'] = df_con[col_riesgo].fillna('OK').astype(str).str.upper()
+        if col_risk:
+            df_con['Riesgo'] = df_con[col_risk].fillna('OK').astype(str).str.upper()
+            # Normalizar
             df_con['Riesgo'] = df_con['Riesgo'].apply(lambda x: x if x in ['CRÍTICA', 'ALTA', 'MEDIA', 'BAJA', 'OK'] else 'OK')
         else:
             df_con['Riesgo'] = 'OK'
-            
-        # Afiliación
-        if 'estado_afiliacion' not in df_con.columns: df_con['estado_afiliacion'] = 'Sin Dato'
-        else: df_con['estado_afiliacion'] = df_con['estado_afiliacion'].fillna('Sin Dato')
-        
-        if 'regimen' not in df_con.columns: df_con['regimen'] = 'Sin Dato'
-        if 'anio_ultimo_contrato' not in df_con.columns: df_con['anio_ultimo_contrato'] = 2024 
+
+        # 3. Buscar AFILIACION
+        col_afil = next((c for c in df_con.columns if 'afilia' in c.lower()), None)
+        if col_afil: df_con['estado_afiliacion'] = df_con[col_afil].fillna('Sin Dato')
+        else: df_con['estado_afiliacion'] = 'Sin Dato'
+
+        col_reg = next((c for c in df_con.columns if 'regimen' in c.lower()), None)
+        if col_reg: df_con['regimen'] = df_con[col_reg].fillna('Sin Dato')
+        else: df_con['regimen'] = 'Sin Dato'
+
+        # Año
+        col_year = next((c for c in df_con.columns if 'anio' in c.lower() or 'year' in c.lower() or 'fecha_firma' in c.lower()), None)
+        if col_year:
+             # Si es fecha completa, extraer año
+             try:
+                 df_con['anio_ultimo_contrato'] = pd.to_numeric(df_con[col_year], errors='coerce').fillna(2024).astype(int)
+             except:
+                 df_con['anio_ultimo_contrato'] = 2024
+        else:
+            df_con['anio_ultimo_contrato'] = 2024
 
     return df_ent, df_con
 
 df_ent, df_con = load_data()
 
-if df_ent.empty:
-    st.error("⚠️ Error Crítico: No hay datos.")
-    st.stop()
-
 # ==========================================
-# 3. INTERFAZ Y NAVEGACIÓN
+# 3. INTERFAZ Y SIDEBAR
 # ==========================================
 with st.sidebar:
     st.markdown("<br>", unsafe_allow_html=True)
@@ -143,7 +182,15 @@ with st.sidebar:
     st.markdown("---")
     menu = st.radio("MENÚ PRINCIPAL", ["Home", "Contratos Secop", "Entidades", "Afiliaciones"])
     st.markdown("---")
-    st.caption(f"Registros:\n🏛️ {len(df_ent)} Entidades\n👷 {len(df_con)} Contratistas")
+    
+    # --- DEBUGGER VISUAL ---
+    with st.expander("🛠️ Ver Columnas del Archivo"):
+        if not df_ent.empty:
+            st.write("**Entidades:**")
+            st.write(list(df_ent.columns))
+        if not df_con.empty:
+            st.write("**Contratistas:**")
+            st.write(list(df_con.columns))
 
 # ================= SECCIÓN: HOME =================
 if menu == "Home":
@@ -159,198 +206,149 @@ if menu == "Home":
     k2.metric("Base Contratistas", f"{len(df_con):,}")
     crit = len(df_con[df_con['Riesgo']=='CRÍTICA']) if 'Riesgo' in df_con.columns else 0
     k3.metric("Alertas Críticas", f"{crit:,}", delta_color="inverse")
-    st.info("👈 Utiliza el menú lateral para navegar.")
 
-# ================= SECCIÓN: CONTRATOS SECOP =================
+# ================= SECCIÓN: CONTRATOS =================
 elif menu == "Contratos Secop":
-    st.title("📊 Visión General de Contratos")
-    sel_riesgo = st.multiselect("Filtrar por Riesgo:", ['CRÍTICA', 'ALTA', 'MEDIA', 'OK'], default=['CRÍTICA', 'ALTA', 'MEDIA', 'OK'])
+    st.title("📊 Visión General")
+    
+    # Filtros
+    sel_riesgo = st.multiselect("Filtrar Riesgo:", ['CRÍTICA', 'ALTA', 'MEDIA', 'OK'], default=['CRÍTICA', 'ALTA', 'MEDIA', 'OK'])
     df_f = df_con[df_con['Riesgo'].isin(sel_riesgo)] if 'Riesgo' in df_con.columns else df_con
 
-    c1, c2 = st.columns(2)
-    with c1: st.metric("Contratos Filtrados", f"{len(df_f):,}")
-    with c2: 
-        v = df_ent['presupuesto_total_historico'].sum() if 'presupuesto_total_historico' in df_ent.columns else 0
-        st.metric("Presupuesto Global", fmt_cop(v))
-    
-    st.markdown("---")
-
+    # Graficas
     g1, g2 = st.columns(2)
     with g1:
-        st.subheader("📆 Evolución de Riesgo (Histórico)")
+        st.subheader("📆 Evolución de Riesgo")
         if 'anio_ultimo_contrato' in df_f.columns:
             df_evol = df_f.groupby(['anio_ultimo_contrato', 'Riesgo']).size().reset_index(name='Cantidad')
-            df_evol['Año'] = df_evol['anio_ultimo_contrato'].astype(int).astype(str)
-            fig_stack = px.bar(df_evol, x='Año', y='Cantidad', color='Riesgo', title="Distribución por Año",
-                color_discrete_map={'CRÍTICA':'#EF4444', 'ALTA':'#F97316', 'MEDIA':'#FACC15', 'OK':'#10B981'})
-            st.plotly_chart(fig_stack, use_container_width=True)
-
+            df_evol['Año'] = df_evol['anio_ultimo_contrato'].astype(str)
+            fig = px.bar(df_evol, x='Año', y='Cantidad', color='Riesgo', 
+                         color_discrete_map={'CRÍTICA':'#EF4444', 'ALTA':'#F97316', 'MEDIA':'#FACC15', 'OK':'#10B981'})
+            st.plotly_chart(fig, use_container_width=True)
+    
     with g2:
-        st.subheader("🏆 Top Entidades")
-        t1, t2 = st.tabs(["💰 Presupuesto", "#️⃣ Cantidad"])
-        with t1:
-            if 'presupuesto_total_historico' in df_ent.columns:
-                top_p = df_ent.nlargest(10, 'presupuesto_total_historico')
-                fig_p = px.pie(top_p, values='presupuesto_total_historico', names='nombre_entidad_normalizado', hole=0.4, color_discrete_sequence=px.colors.sequential.Blues)
-                st.plotly_chart(fig_p, use_container_width=True)
-        with t2:
-            if 'cantidad_contratos' in df_ent.columns:
-                top_c = df_ent.nlargest(10, 'cantidad_contratos')
-                fig_c = px.pie(top_c, values='cantidad_contratos', names='nombre_entidad_normalizado', hole=0.4, color_discrete_sequence=px.colors.sequential.Oranges)
-                st.plotly_chart(fig_c, use_container_width=True)
+        st.subheader("🏆 Top Entidades (Cantidad)")
+        if 'cantidad_contratos' in df_ent.columns:
+            top_c = df_ent.nlargest(10, 'cantidad_contratos')
+            fig_c = px.pie(top_c, values='cantidad_contratos', names='nombre_entidad_normalizado', hole=0.4)
+            st.plotly_chart(fig_c, use_container_width=True)
 
-    st.subheader("📈 Evolución Global")
-    if 'json_evolucion_anual' in df_ent.columns:
-        timeline = []
-        for j in df_ent['json_evolucion_anual']:
-            data = parse_json(j)
-            for y, v in data.items():
-                if str(y) in ['2023', '2024', '2025', '2026']: timeline.append({'Año': str(y), 'Valor': v})
-        if timeline:
-            df_t = pd.DataFrame(timeline).groupby('Año').sum().reset_index()
-            fig_line = px.area(df_t, x='Año', y='Valor', title="Histórico ($COP)")
-            st.plotly_chart(fig_line, use_container_width=True)
-
-# ================= SECCIÓN: ENTIDADES =================
+# ================= SECCIÓN: ENTIDADES (CORREGIDO) =================
 elif menu == "Entidades":
     st.title("🏢 Auditoría por Entidad")
     
-    # 1. GRÁFICAS DE DISTRIBUCIÓN (FIX: MUNICIPIO)
-    r1, r2 = st.columns(2)
-    with r1:
-        st.markdown("**Distribución por Municipio**")
-        # Usamos la columna normalizada 'municipio_grafica'
+    # 1. GRÁFICA DE MUNICIPIOS (REAL)
+    col_g1, col_g2 = st.columns(2)
+    with col_g1:
+        st.markdown("**Distribución Geográfica**")
+        # Usamos la columna que normalizamos en load_data
         if 'municipio_grafica' in df_ent.columns:
-            # Top 10 municipios para no saturar
             df_muni = df_ent['municipio_grafica'].value_counts().head(10).reset_index()
-            df_muni.columns = ['Municipio', 'Cantidad']
-            fig_m = px.pie(df_muni, values='Cantidad', names='Municipio', hole=0.5, title="Top 10 Municipios")
+            df_muni.columns = ['Ubicación', 'Cantidad']
+            # Filtramos 'Indeterminado' si es posible, o lo mostramos para saber que hay error
+            fig_m = px.pie(df_muni, values='Cantidad', names='Ubicación', hole=0.5)
             st.plotly_chart(fig_m, use_container_width=True)
         else:
-            st.warning("No se encontró información de Municipios.")
+            st.warning("No se pudo determinar la ubicación.")
 
-    with r2:
-        st.markdown("**Distribución por Volumen**")
+    with col_g2:
+        st.markdown("**Distribución por Tamaño**")
         if 'cantidad_contratos' in df_ent.columns:
-            top_vol = df_ent.nlargest(10, 'cantidad_contratos')
-            fig_v = px.pie(top_vol, values='cantidad_contratos', names='nombre_entidad_normalizado', hole=0.5)
+            top_v = df_ent.nlargest(10, 'cantidad_contratos')
+            fig_v = px.pie(top_v, values='cantidad_contratos', names='nombre_entidad_normalizado', hole=0.5)
             st.plotly_chart(fig_v, use_container_width=True)
-
+    
     st.markdown("---")
 
     # 2. BUSCADOR
-    st.subheader("🔍 Detalle Individual")
-    col_s, col_l = st.columns([1, 2])
-    with col_s: text_f = st.text_input("Filtrar nombre:", placeholder="Ej: Hospital...")
-    
+    text_filter = st.text_input("🔍 Buscar Entidad:", placeholder="Escribe el nombre...")
     all_ents = sorted(df_ent['nombre_entidad_normalizado'].astype(str).unique()) if 'nombre_entidad_normalizado' in df_ent.columns else []
-    list_f = [e for e in all_ents if text_f.upper() in e.upper()] if text_f else all_ents
     
-    with col_l:
-        sel_ent = st.selectbox("Seleccione Entidad:", list_f) if list_f else None
+    list_f = [e for e in all_ents if text_filter.upper() in e.upper()] if text_filter else all_ents
+    sel_ent = st.selectbox("Seleccione:", list_f) if list_f else None
 
-    # 3. DASHBOARD ENTIDAD
+    # 3. DETALLE
     if sel_ent:
         row = df_ent[df_ent['nombre_entidad_normalizado'] == sel_ent].iloc[0]
         
         k1, k2, k3 = st.columns(3)
-        pres = row.get('presupuesto_total_historico', 0)
-        cnt = row.get('cantidad_contratos', 0)
-        risk = row.get('exposicion_riesgo_legal', 0)
+        k1.metric("Presupuesto", fmt_cop(row.get('presupuesto_total_historico', 0)))
+        k2.metric("Contratos", f"{row.get('cantidad_contratos', 0):,.0f}")
+        k3.metric("Riesgo", f"{row.get('exposicion_riesgo_legal', 0):.1f}%")
+
+        # 4. TABLA CONTRATISTAS (NOMBRE REAL)
+        st.subheader("👷 Contratistas Asociados")
+        # Buscar columna que sirva de filtro de entidad contratante
+        col_ent_cont = next((c for c in df_con.columns if 'entidad_contratante' in c or 'entidad' in c), None)
         
-        k1.metric("Presupuesto Total", fmt_cop(pres))
-        k2.metric("Contratos Totales", f"{cnt:,.0f}")
-        k3.metric("Riesgo Legal", f"{risk:.1f}%")
-        st.progress(min(float(risk)/100, 1.0))
-
-        st.subheader(f"📊 Comportamiento Anual: {sel_ent}")
-        if 'json_evolucion_anual' in df_ent.columns:
-            hist_data = parse_json(row['json_evolucion_anual'])
-            if hist_data:
-                df_h = pd.DataFrame(list(hist_data.items()), columns=['Año', 'Monto'])
-                df_h['Año'] = df_h['Año'].astype(str).str.replace(',', '').str.replace('.', '')
-                df_h = df_h[df_h['Año'].isin(['2023','2024','2025','2026'])].sort_values('Año')
-                fig_bar = px.bar(df_h, x='Año', y='Monto', color='Monto', title="Ejecución Presupuestal")
-                fig_bar.update_xaxes(type='category')
-                st.plotly_chart(fig_bar, use_container_width=True)
-
-        # LISTA CONTRATISTAS (FIX: NOMBRE PROVEEDOR)
-        st.subheader("👷 Contratistas Vinculados")
-        if 'ultima_entidad_contratante' in df_con.columns:
-            df_sub = df_con[df_con['ultima_entidad_contratante'].astype(str).str.contains(sel_ent, na=False, case=False)]
+        if col_ent_cont:
+            df_sub = df_con[df_con[col_ent_cont].astype(str).str.contains(sel_ent, na=False, case=False)]
             
             if not df_sub.empty:
-                # Usamos la columna normalizada 'nom_proveedor_final'
-                df_display = df_sub.copy()
-                df_display = df_display.rename(columns={
-                    'nom_proveedor_final': 'Contratista / Razón Social',
-                    'doc_proveedor': 'Documento',
+                # Mostrar columnas mapeadas
+                df_view = df_sub.copy()
+                df_view = df_view.rename(columns={
+                    'nom_proveedor_final': 'Contratista',
+                    'doc_proveedor': 'NIT/Doc',
                     'Riesgo': 'Nivel Riesgo',
-                    'estado_afiliacion': 'Afiliación Salud'
+                    'estado_afiliacion': 'Afiliación'
                 })
                 
-                cols_final = ['Contratista / Razón Social', 'Documento', 'Nivel Riesgo', 'Afiliación Salud']
-                # Filtrar solo columnas existentes
-                cols_present = [c for c in cols_final if c in df_display.columns]
-                
-                st.dataframe(df_display[cols_present], use_container_width=True)
+                cols_final = ['Contratista', 'NIT/Doc', 'Nivel Riesgo', 'Afiliación']
+                cols_ok = [c for c in cols_final if c in df_view.columns]
+                st.dataframe(df_view[cols_ok], use_container_width=True)
             else:
-                st.info("No se encontraron contratistas directos en la base.")
-    else:
-        st.info("Seleccione una entidad para ver detalles.")
+                st.info("No se encontraron contratistas directos.")
+        else:
+            st.warning("No se encontró la columna de relación Entidad-Contratista.")
 
-# ================= SECCIÓN: AFILIACIONES (TABLA MAESTRA) =================
+# ================= SECCIÓN: AFILIACIONES (MAESTRA) =================
 elif menu == "Afiliaciones":
     st.title("🏥 Control de Seguridad Social")
     
+    # Gráficas Torta
     c1, c2 = st.columns(2)
     with c1:
-        st.subheader("Estado de Afiliación")
         if 'estado_afiliacion' in df_con.columns:
-            fig_a = px.pie(df_con, names='estado_afiliacion', hole=0.5, color_discrete_sequence=px.colors.qualitative.Pastel)
-            st.plotly_chart(fig_a, use_container_width=True)
+            st.subheader("Estado Afiliación")
+            fig = px.pie(df_con, names='estado_afiliacion', hole=0.5, color_discrete_sequence=px.colors.qualitative.Pastel)
+            st.plotly_chart(fig, use_container_width=True)
     with c2:
-        st.subheader("Régimen de Salud")
         if 'regimen' in df_con.columns:
-            fig_r = px.pie(df_con, names='regimen', hole=0.5, color_discrete_sequence=px.colors.qualitative.Safe)
-            st.plotly_chart(fig_r, use_container_width=True)
-
+            st.subheader("Régimen Salud")
+            fig = px.pie(df_con, names='regimen', hole=0.5, color_discrete_sequence=px.colors.qualitative.Set3)
+            st.plotly_chart(fig, use_container_width=True)
+            
     st.markdown("---")
-    st.subheader("🚨 Semáforo de Cumplimiento por Entidad")
+    st.subheader("🚨 Semáforo de Cumplimiento")
+
+    # Tabla Maestra
+    col_ent_cont = next((c for c in df_con.columns if 'entidad_contratante' in c or 'entidad' in c), None)
     
-    if 'ultima_entidad_contratante' in df_con.columns and 'Riesgo' in df_con.columns:
-        df_con['is_crit'] = (df_con['Riesgo'] == 'CRÍTICA').astype(int)
-        df_con['is_high'] = (df_con['Riesgo'] == 'ALTA').astype(int)
-        df_con['is_med'] = (df_con['Riesgo'] == 'MEDIA').astype(int)
-        df_con['is_ok'] = (df_con['Riesgo'] == 'OK').astype(int)
+    if col_ent_cont and 'Riesgo' in df_con.columns:
+        df_con['crit'] = (df_con['Riesgo']=='CRÍTICA').astype(int)
+        df_con['alto'] = (df_con['Riesgo']=='ALTA').astype(int)
+        df_con['medio'] = (df_con['Riesgo']=='MEDIA').astype(int)
+        df_con['ok'] = (df_con['Riesgo']=='OK').astype(int)
         
-        board = df_con.groupby('ultima_entidad_contratante')[['is_crit', 'is_high', 'is_med', 'is_ok']].sum().reset_index()
-        board['Total Contratos'] = board['is_crit'] + board['is_high'] + board['is_med'] + board['is_ok']
-        board['Total Alertas'] = board['is_crit'] + board['is_high'] + board['is_med']
-        board['% Cumplimiento'] = (board['is_ok'] / board['Total Contratos']) * 100
+        board = df_con.groupby(col_ent_cont)[['crit', 'alto', 'medio', 'ok']].sum().reset_index()
+        board['Total Contratos'] = board['crit'] + board['alto'] + board['medio'] + board['ok']
+        board['Total Alertas'] = board['crit'] + board['alto'] + board['medio']
+        board['% Cumplimiento'] = (board['ok'] / board['Total Contratos']) * 100
         board['% Cumplimiento'] = board['% Cumplimiento'].fillna(0)
         
-        def get_light(val): return "🟢" if val >= 90 else "🟡" if val >= 50 else "🔴"
-        board['Semáforo'] = board['% Cumplimiento'].apply(get_light)
-        
-        txt_filter = st.text_input("Filtrar Entidad:", "")
-        if txt_filter:
-            board = board[board['ultima_entidad_contratante'].str.contains(txt_filter, case=False, na=False)]
+        def get_semaforo(val): return "🟢" if val >= 90 else "🟡" if val >= 50 else "🔴"
+        board['Semáforo'] = board['% Cumplimiento'].apply(get_semaforo)
         
         board = board.sort_values('% Cumplimiento', ascending=True)
         
         st.dataframe(
             board,
-            column_order=['ultima_entidad_contratante', 'Total Contratos', 'is_crit', 'is_high', 'is_med', 'is_ok', 'Total Alertas', '% Cumplimiento', 'Semáforo'],
+            column_order=[col_ent_cont, 'Total Contratos', 'crit', 'alto', 'medio', 'ok', 'Total Alertas', '% Cumplimiento', 'Semáforo'],
             column_config={
-                "ultima_entidad_contratante": st.column_config.TextColumn("Entidad", width="large"),
-                "is_crit": st.column_config.NumberColumn("🔴 Críticos"),
-                "is_high": st.column_config.NumberColumn("🟠 Altos"),
-                "is_med": st.column_config.NumberColumn("🟡 Medios"),
-                "is_ok": st.column_config.NumberColumn("🟢 OK"),
-                "Total Alertas": st.column_config.NumberColumn("⚠️ Total Alertas"),
-                "% Cumplimiento": st.column_config.ProgressColumn("Cumplimiento", format="%.1f%%", min_value=0, max_value=100),
-                "Semáforo": st.column_config.TextColumn("Estado", width="small")
+                col_ent_cont: st.column_config.TextColumn("Entidad", width="large"),
+                "crit": "🔴 Crítico", "alto": "🟠 Alto", "medio": "🟡 Medio", "ok": "🟢 OK",
+                "% Cumplimiento": st.column_config.ProgressColumn("Cumplimiento", format="%.1f%%", min_value=0, max_value=100)
             },
             use_container_width=True,
             hide_index=True
